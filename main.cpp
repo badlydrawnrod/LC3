@@ -210,6 +210,7 @@ int main(int argc, const char* argv[])
     signal(SIGINT, HandleInterrupt);
     DisableInputBuffering();
 
+    lc3.Reset();
     lc3.Run();
 
     RestoreInputBuffering();

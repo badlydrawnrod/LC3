@@ -1,6 +1,4 @@
 /// A header implementation of an LC3 virtual machine.
-///
-/// Use CRTP to supply the ReadMem, WriteMem and Trap methods in the derived class.
 
 #pragma once
 
@@ -9,27 +7,47 @@
 namespace lc3
 {
     /// \brief The core of an LC3 virtual machine.
-    /// \tparam External an implementation of ReadMem, WriteMem and Trap.
+    /// \tparam External a CRTP derived class that provides external access, such as memory and traps.
+    ///
+    /// Use CRTP to supply the ReadMem, WriteMem and Trap methods in the derived class.
     template<typename External>
     class VmCore
     {
     protected:
         // VM state. Note that memory access is implemented externally.
+        const uint16_t PC_START = 0x3000;
 
-        bool running_{false}; // True if the VM is running.
-        uint16_t reg_[8];     // General registers.
-        uint16_t pc_{0x3000}; // Program counter.
-        uint16_t cond_{0};    // Condition flags.
+        bool running_{false};   // True if the VM is running.
+        uint16_t reg_[8];       // General registers.
+        uint16_t pc_{PC_START}; // Program counter.
+        uint16_t cond_{0};      // Condition flags.
 
     public:
-        void Run()
+        /// \brief Performs a warm reset of the VM by resetting PC to the start of user memory and zeroing registers and flags.
+        void Reset()
         {
-            constexpr uint16_t PC_START = 0x3000;
             pc_ = PC_START;
-
-            running_ = true;
-            while (running_)
+            cond_ = 0;
+            for (auto& reg : reg_)
             {
+                reg = 0;
+            }
+        }
+
+        /// \brief Runs the VM for the given number of ticks.
+        /// \param ticks the number of ticks to run for. Runs forever if negative.
+        ///
+        /// Ticks and instructions are currently synonymous.
+        void Run(int ticks = -1)
+        {
+            running_ = true;
+            while (running_ && ticks != 0)
+            {
+                if (ticks > 0)
+                {
+                    --ticks;
+                }
+
                 const uint16_t instr = ReadMem(pc_++);
                 const uint16_t op = instr >> 12;
 
