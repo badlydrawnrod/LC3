@@ -67,7 +67,7 @@ public:
     // CRTP methods to be invoked from the base class.
     void WriteMem(uint16_t address, uint16_t val) { mem_[address] = val; }
     uint16_t ReadMem(uint16_t address);
-    void Trap(const uint16_t instr);
+    lc3::State Trap(const uint16_t instr);
 
 public:
     void ReadImage(FILE* file);
@@ -96,9 +96,12 @@ uint16_t Lc3Vm::ReadMem(uint16_t address)
     return mem_[address];
 }
 
-void Lc3Vm::Trap(const uint16_t instr)
+lc3::State Lc3Vm::Trap(const uint16_t instr)
 {
-    switch (static_cast<Traps>(instr & 0xFF))
+    // Default back to running.
+    state_ = lc3::Running();
+
+    switch (static_cast<Traps>(instr & 0xff))
     {
     case Traps::TRAP_GETC:
         // Trap GETC - read a single character.
@@ -155,9 +158,10 @@ void Lc3Vm::Trap(const uint16_t instr)
         // Trap HALT - and catch fire.
         puts("HALT");
         fflush(stdout);
-        running_ = false;
+        state_ = lc3::Stopped();
         break;
     }
+    return state_;
 }
 
 void Lc3Vm::ReadImage(FILE* file)
@@ -211,7 +215,17 @@ int main(int argc, const char* argv[])
     DisableInputBuffering();
 
     lc3.Reset();
-    lc3.Run();
+
+    lc3::State state = lc3::Running();
+    while (std::holds_alternative<lc3::Running>(state))
+    {
+        state = lc3.Run();
+        if (std::holds_alternative<lc3::Trapped>(state))
+        {
+            // At this point we could go off and do something else that will fulfil the trap conditions.
+            state = lc3.Trap(std::get<lc3::Trapped>(state).trap);
+        }
+    }
 
     RestoreInputBuffering();
 }

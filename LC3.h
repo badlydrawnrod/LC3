@@ -3,9 +3,23 @@
 #pragma once
 
 #include <cstdint>
+#include <variant>
 
 namespace lc3
 {
+    struct Running
+    {
+    };
+    struct Stopped
+    {
+    };
+    struct Trapped
+    {
+        int trap;
+    };
+
+    using State = std::variant<Stopped, Running, Trapped>;
+
     /// \brief The core of an LC3 virtual machine.
     /// \tparam External a CRTP derived class that provides external access, such as memory and traps.
     ///
@@ -17,7 +31,8 @@ namespace lc3
         // VM state. Note that memory access is implemented externally.
         const uint16_t PC_START = 0x3000;
 
-        bool running_{false};   // True if the VM is running.
+        State state_;
+
         uint16_t reg_[8];       // General registers.
         uint16_t pc_{PC_START}; // Program counter.
         uint16_t cond_{0};      // Condition flags.
@@ -32,16 +47,16 @@ namespace lc3
             {
                 reg = 0;
             }
+            state_ = lc3::Running();
         }
 
         /// \brief Runs the VM for the given number of ticks.
         /// \param ticks the number of ticks to run for. Runs forever if negative.
         ///
         /// Ticks and instructions are currently synonymous.
-        void Run(int ticks = -1)
+        State Run(int ticks = -1)
         {
-            running_ = true;
-            while (running_ && ticks != 0)
+            while (std::holds_alternative<Running>(state_) && ticks != 0)
             {
                 if (ticks > 0)
                 {
@@ -106,16 +121,18 @@ namespace lc3
                     break;
 
                 case OP_TRAP:
-                    OpTrap(instr);
+                    state_ = Trapped{instr};
                     break;
 
                 case OP_RES:
                 case OP_RTI:
                 default:
-                    /* BAD OPCODE */
-                    abort();
+                    state_ = Stopped();
+                    break;
                 }
             }
+
+            return state_;
         }
 
     private:
@@ -169,9 +186,9 @@ namespace lc3
 
         /// \brief Executes a trap instruction.
         /// \param instr the trap to execute (0-255).
-        void Trap(const uint16_t instr)
+        State Trap(const uint16_t instr)
         {
-            AsExternal().Trap(instr);
+            return AsExternal().Trap(instr);
         }
 
         // Ancillary methods.
