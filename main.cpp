@@ -11,11 +11,6 @@ namespace
 {
     HANDLE hStdin = INVALID_HANDLE_VALUE;
 
-    bool CheckKey()
-    {
-        return WaitForSingleObject(hStdin, 1000) == WAIT_OBJECT_0 && _kbhit();
-    }
-
     DWORD oldMode;
 
     void DisableInputBuffering()
@@ -48,7 +43,7 @@ namespace
 
 class Lc3Vm : public lc3::VmCore<Lc3Vm>
 {
-private:
+public:
     enum class Traps
     {
         TRAP_GETC = 0x20,  // Get character from keyboard, not echoed onto the terminal.
@@ -59,6 +54,7 @@ private:
         TRAP_HALT = 0x25   // Halt the program.
     };
 
+private:
     // Memory - 65536 x 16-bit locations (i.e., not bytes).
     uint16_t mem_[65536];
 
@@ -73,6 +69,23 @@ public:
     void ReadImage(FILE* file);
     bool ReadImage(const char* image_path);
     lc3::State Trap(const uint16_t instr);
+
+    bool HasKey() const { return key_ != 0; };
+
+    uint16_t GetKey()
+    {
+        auto key = key_;
+        key_ = 0;
+        return key;
+    }
+
+    void SetKey(uint16_t key)
+    {
+        key_ = key;
+    }
+
+private:
+    uint16_t key_{0};
 };
 
 uint16_t Lc3Vm::ReadMem(uint16_t address)
@@ -84,10 +97,10 @@ uint16_t Lc3Vm::ReadMem(uint16_t address)
     if (address == MR_KBSR)
     {
         // The VM is trying to read the keyboard.
-        if (CheckKey())
+        if (HasKey())
         {
             mem_[MR_KBSR] = (1 << 15);
-            mem_[MR_KBDR] = getchar();
+            mem_[MR_KBDR] = GetKey();
         }
         else
         {
@@ -106,7 +119,7 @@ lc3::State Lc3Vm::Trap(const uint16_t instr)
     {
     case Traps::TRAP_GETC:
         // Trap GETC - read a single character.
-        reg_[0] = static_cast<uint16_t>(getchar());
+        reg_[0] = GetKey();
         break;
 
     case Traps::TRAP_OUT:
@@ -133,7 +146,7 @@ lc3::State Lc3Vm::Trap(const uint16_t instr)
         // Trap IN - read a single character.
         {
             printf("Enter a character: ");
-            char c = getchar();
+            char c = GetKey();
             putc(c, stdout);
             reg_[0] = static_cast<uint16_t>(c);
         }
@@ -213,11 +226,10 @@ int main(int argc, const char* argv[])
 
     for (int i = 1; i < argc; ++i)
     {
-        VmState vmState {
+        VmState vmState{
                 Lc3Vm(),
                 false,
-                false
-        };
+                false};
         vmState.lc3.Reset();
 
         if (!vmState.lc3.ReadImage(argv[i]))
@@ -238,20 +250,53 @@ int main(int argc, const char* argv[])
 
     constexpr size_t maxTicks = 1000;
 
+    size_t consoleOwner = 0;
+
+    uint16_t key{0};
     int running = vms.size();
     while (running > 0)
     {
+        if (key == 0 && _kbhit())
+        {
+            key = _getch();
+            if (key == '\x1b')  // [Esc] cycles console ownership to the next VM.
+            {
+                consoleOwner = (consoleOwner + 1) % vms.size();
+                key = 0;
+            }
+        }
+
+        size_t index = 0;
         for (auto& vm : vms)
         {
             auto& lc3 = vm.lc3;
             if (lc3::State state = lc3.GetState(); !IsStopped(state))
             {
+                // If a key has been pressed and the VM currently owns the console then tell it what the key was and consume it.
+                uint16_t availableKey = key;
+                if (consoleOwner == index)
+                {
+                    if (availableKey != 0)
+                    {
+                        lc3.SetKey(availableKey);
+                        key = 0;
+                    }
+                }
+
                 if (IsTrapped(state))
                 {
-                    // TODO: traps should only set the VM back to a running state if they can be fulfilled. For
-                    //  example, if a trap is waiting for input, then it should remain in a blocked state until the
-                    //  input is available.
-                    lc3.Trap(std::get<lc3::Trapped>(state).trap);
+                    if (consoleOwner == index)
+                    {
+                        if (vm.isBlockedOnInput && availableKey != 0)
+                        {
+                            vm.isBlockedOnInput = false;
+                        }
+                        if (vm.isBlockedInOutput)
+                        {
+                            vm.isBlockedInOutput = false;
+                        }
+                        state = lc3.Trap(std::get<lc3::Trapped>(state).trap);
+                    }
                 }
 
                 if (IsRunning(state))
@@ -259,7 +304,24 @@ int main(int argc, const char* argv[])
                     state = lc3.Run(maxTicks);
                     if (IsTrapped(state))
                     {
-                        // TODO: the VM has become trapped, so find out what it needs to fulfil the trap, e.g., input.
+                        // The VM has become trapped, so find out what it needs to fulfil the trap, e.g., input.
+                        auto& trapped = std::get<lc3::Trapped>(state);
+                        switch (static_cast<Lc3Vm::Traps>(trapped.trap & 0xff))
+                        {
+                        case Lc3Vm::Traps::TRAP_GETC:
+                        case Lc3Vm::Traps::TRAP_IN:
+                            vm.isBlockedOnInput = true;
+                            break;
+
+                        case Lc3Vm::Traps::TRAP_OUT:
+                        case Lc3Vm::Traps::TRAP_PUTS:
+                        case Lc3Vm::Traps::TRAP_PUTSP:
+                            vm.isBlockedInOutput = true;
+                            break;
+
+                        default:
+                            break;
+                        }
                     }
                 }
 
@@ -268,6 +330,7 @@ int main(int argc, const char* argv[])
                     running--;
                 }
             }
+            index++;
         }
     }
 
