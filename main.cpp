@@ -5,6 +5,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 namespace
 {
@@ -201,29 +202,39 @@ int main(int argc, const char* argv[])
         exit(2);
     }
 
-    Lc3Vm lc3;
+    std::vector<Lc3Vm> vms;
+
     for (int i = 1; i < argc; ++i)
     {
+        Lc3Vm lc3;
+        lc3.Reset();
+
         if (!lc3.ReadImage(argv[i]))
         {
             printf("failed to load image: %s\n", argv[i]);
             exit(1);
         }
+
+        vms.push_back(lc3);
     }
 
     signal(SIGINT, HandleInterrupt);
     DisableInputBuffering();
 
-    lc3.Reset();
-    while (std::holds_alternative<lc3::Running>(lc3.GetState()))
+    while (true)
     {
-        lc3::State state = lc3.Run();
-        if (std::holds_alternative<lc3::Trapped>(state))
+        for (auto& lc3 : vms)
         {
-            // At this point we could go off and do something else that will fulfil the trap conditions.
-            state = lc3.Trap(std::get<lc3::Trapped>(state).trap);
+            if (lc3::State state = lc3.GetState(); !std::holds_alternative<lc3::Stopped>(state))
+            {
+                if (std::holds_alternative<lc3::Trapped>(state))
+                {
+                    // If it's possible to fulfil the trap then do so.
+                    lc3.Trap(std::get<lc3::Trapped>(state).trap);
+                }
+                lc3.Run();
+            }
         }
     }
-
     RestoreInputBuffering();
 }
