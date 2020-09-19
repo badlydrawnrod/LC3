@@ -221,20 +221,33 @@ int main(int argc, const char* argv[])
     signal(SIGINT, HandleInterrupt);
     DisableInputBuffering();
 
-    while (true)
+    auto IsStopped = [](const lc3::State& state) { return std::holds_alternative<lc3::Stopped>(state); };
+    auto IsTrapped = [](const lc3::State& state) { return std::holds_alternative<lc3::Trapped>(state); };
+
+    int running = vms.size();
+    while (running > 0)
     {
         for (auto& lc3 : vms)
         {
-            if (lc3::State state = lc3.GetState(); !std::holds_alternative<lc3::Stopped>(state))
+            if (lc3::State state = lc3.GetState(); !IsStopped(state))
             {
-                if (std::holds_alternative<lc3::Trapped>(state))
+                if (IsTrapped(state))
                 {
-                    // If it's possible to fulfil the trap then do so.
+                    // TODO: traps should only set the VM back to a running state if they can be fulfilled. For
+                    //  example, if a trap is waiting for input, then it should remain in a blocked state until the
+                    //  input is available.
                     lc3.Trap(std::get<lc3::Trapped>(state).trap);
                 }
-                lc3.Run();
+
+                state = lc3.Run();
+
+                if (IsStopped(state))
+                {
+                    running--;
+                }
             }
         }
     }
+
     RestoreInputBuffering();
 }
