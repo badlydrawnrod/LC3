@@ -202,33 +202,48 @@ int main(int argc, const char* argv[])
         exit(2);
     }
 
-    std::vector<Lc3Vm> vms;
+    struct VmState
+    {
+        Lc3Vm lc3;
+        bool isBlockedOnInput;
+        bool isBlockedInOutput;
+    };
+
+    std::vector<VmState> vms;
 
     for (int i = 1; i < argc; ++i)
     {
-        Lc3Vm lc3;
-        lc3.Reset();
+        VmState vmState {
+                Lc3Vm(),
+                false,
+                false
+        };
+        vmState.lc3.Reset();
 
-        if (!lc3.ReadImage(argv[i]))
+        if (!vmState.lc3.ReadImage(argv[i]))
         {
             printf("failed to load image: %s\n", argv[i]);
             exit(1);
         }
 
-        vms.push_back(lc3);
+        vms.push_back(vmState);
     }
 
     signal(SIGINT, HandleInterrupt);
     DisableInputBuffering();
 
+    auto IsRunning = [](const lc3::State& state) { return std::holds_alternative<lc3::Running>(state); };
     auto IsStopped = [](const lc3::State& state) { return std::holds_alternative<lc3::Stopped>(state); };
     auto IsTrapped = [](const lc3::State& state) { return std::holds_alternative<lc3::Trapped>(state); };
+
+    constexpr size_t maxTicks = 1000;
 
     int running = vms.size();
     while (running > 0)
     {
-        for (auto& lc3 : vms)
+        for (auto& vm : vms)
         {
+            auto& lc3 = vm.lc3;
             if (lc3::State state = lc3.GetState(); !IsStopped(state))
             {
                 if (IsTrapped(state))
@@ -239,7 +254,14 @@ int main(int argc, const char* argv[])
                     lc3.Trap(std::get<lc3::Trapped>(state).trap);
                 }
 
-                state = lc3.Run();
+                if (IsRunning(state))
+                {
+                    state = lc3.Run(maxTicks);
+                    if (IsTrapped(state))
+                    {
+                        // TODO: the VM has become trapped, so find out what it needs to fulfil the trap, e.g., input.
+                    }
+                }
 
                 if (IsStopped(state))
                 {
