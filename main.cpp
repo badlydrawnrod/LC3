@@ -67,11 +67,11 @@ public:
     // CRTP methods to be invoked from the base class.
     void WriteMem(uint16_t address, uint16_t val) { mem_[address] = val; }
     uint16_t ReadMem(uint16_t address);
-    lc3::State Trap(const uint16_t instr);
 
 public:
     void ReadImage(FILE* file);
     bool ReadImage(const char* image_path);
+    lc3::State Trap(const uint16_t instr);
 };
 
 uint16_t Lc3Vm::ReadMem(uint16_t address)

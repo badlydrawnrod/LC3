@@ -184,13 +184,6 @@ namespace lc3
             AsExternal().WriteMem(address, val);
         }
 
-        /// \brief Executes a trap instruction.
-        /// \param instr the trap to execute (0-255).
-        State Trap(const uint16_t instr)
-        {
-            return AsExternal().Trap(instr);
-        }
-
         // Ancillary methods.
 
         static uint16_t SignExtend(uint16_t x, int bitCount)
@@ -361,11 +354,6 @@ namespace lc3
             const uint16_t baser = BaseR(instr);
             const uint16_t offset6 = Offset6(instr);
             WriteMem(reg_[baser] + offset6, reg_[sr]);
-        }
-
-        void OpTrap(const uint16_t instr)
-        {
-            Trap(instr);
         }
     };
 } // namespace lc3
