@@ -197,7 +197,7 @@ int main(int argc, const char* argv[])
 {
     if (argc < 2)
     {
-        printf("lc3 [image-file1] ...\n");
+        printf("%s [image-file1] ...\n", argv[0]);
         exit(2);
     }
 
@@ -215,11 +215,9 @@ int main(int argc, const char* argv[])
     DisableInputBuffering();
 
     lc3.Reset();
-
-    lc3::State state = lc3::Running();
-    while (std::holds_alternative<lc3::Running>(state))
+    while (std::holds_alternative<lc3::Running>(lc3.GetState()))
     {
-        state = lc3.Run();
+        lc3::State state = lc3.Run();
         if (std::holds_alternative<lc3::Trapped>(state))
         {
             // At this point we could go off and do something else that will fulfil the trap conditions.

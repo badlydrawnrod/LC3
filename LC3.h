@@ -50,6 +50,8 @@ namespace lc3
             state_ = lc3::Running();
         }
 
+        State GetState() const { return state_; }
+
         /// \brief Runs the VM for the given number of ticks.
         /// \param ticks the number of ticks to run for. Runs forever if negative.
         ///
