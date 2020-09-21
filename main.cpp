@@ -215,18 +215,23 @@ int main(int argc, const char* argv[])
         exit(2);
     }
 
+    enum
+    {
+        isBlockedOnInput = 0x01,
+        isBlockedOnOutput = 0x02
+    };
+
     struct VmState
     {
-        Lc3Vm lc3;
-        bool isBlockedOnInput;
-        bool isBlockedOnOutput;
+        Lc3Vm lc3;        // The VM itself.
+        uint32_t blocked; // Bitfields that indicate why the VM is blocked.
     };
 
     std::vector<VmState> vms;
 
     for (int i = 1; i < argc; ++i)
     {
-        VmState vmState{Lc3Vm(), false, false};
+        VmState vmState{Lc3Vm(), 0};
         vmState.lc3.Reset();
 
         if (!vmState.lc3.ReadImage(argv[i]))
@@ -270,7 +275,7 @@ int main(int argc, const char* argv[])
             auto& lc3 = vm.lc3;
             if (lc3::State state = lc3.GetState(); !IsStopped(state))
             {
-                // If the VM is the console owner and is blocked then see if we can unblock it.
+                // If the VM is the console owner then it gets access to input (if there's any available) and output.
                 if (consoleOwner == index)
                 {
                     // If a key is available then give it to the VM.
@@ -280,22 +285,20 @@ int main(int argc, const char* argv[])
                         key = 0;
 
                         // The VM can't be blocked on input as we just gave it a key.
-                        vm.isBlockedOnInput = false;
+                        vm.blocked &= (~isBlockedOnInput);
                     }
 
                     // The VM can't be blocked on output if it's the console owner.
-                    vm.isBlockedOnOutput = false;
+                    vm.blocked &= (~isBlockedOnOutput);
                 }
 
                 // If the VM is trapped and it isn't blocked then execute the trap.
-                if (IsTrapped(state))
+                if (IsTrapped(state) && !vm.blocked)
                 {
-                    if (!vm.isBlockedOnOutput && !vm.isBlockedOnOutput)
-                    {
-                        state = lc3.Trap(std::get<lc3::Trapped>(state).trap);
-                    }
+                    state = lc3.Trap(std::get<lc3::Trapped>(state).trap);
                 }
 
+                // If the VM can run then run it.
                 if (IsRunning(state))
                 {
                     state = lc3.Run(maxTicks);
@@ -307,13 +310,13 @@ int main(int argc, const char* argv[])
                         {
                         case Lc3Vm::Traps::TRAP_GETC:
                         case Lc3Vm::Traps::TRAP_IN:
-                            vm.isBlockedOnInput = true;
+                            vm.blocked |= isBlockedOnInput;
                             break;
 
                         case Lc3Vm::Traps::TRAP_OUT:
                         case Lc3Vm::Traps::TRAP_PUTS:
                         case Lc3Vm::Traps::TRAP_PUTSP:
-                            vm.isBlockedOnOutput = true;
+                            vm.blocked |= isBlockedOnOutput;
                             break;
 
                         default:
