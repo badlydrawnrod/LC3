@@ -219,7 +219,7 @@ int main(int argc, const char* argv[])
     {
         Lc3Vm lc3;
         bool isBlockedOnInput;
-        bool isBlockedInOutput;
+        bool isBlockedOnOutput;
     };
 
     std::vector<VmState> vms;
@@ -291,9 +291,9 @@ int main(int argc, const char* argv[])
                         {
                             vm.isBlockedOnInput = false;
                         }
-                        if (vm.isBlockedInOutput)
+                        if (vm.isBlockedOnOutput)
                         {
-                            vm.isBlockedInOutput = false;
+                            vm.isBlockedOnOutput = false;
                         }
                         state = lc3.Trap(std::get<lc3::Trapped>(state).trap);
                     }
@@ -316,7 +316,7 @@ int main(int argc, const char* argv[])
                         case Lc3Vm::Traps::TRAP_OUT:
                         case Lc3Vm::Traps::TRAP_PUTS:
                         case Lc3Vm::Traps::TRAP_PUTSP:
-                            vm.isBlockedInOutput = true;
+                            vm.isBlockedOnOutput = true;
                             break;
 
                         default:
