@@ -1,4 +1,5 @@
 #include "LC3.h"
+#include "Lc3C.h"
 
 #include <Windows.h>
 #include <conio.h>
@@ -41,170 +42,104 @@ namespace
     }
 } // namespace
 
-class Lc3Vm : public lc3::VmCore<Lc3Vm>
+enum : uint32_t
 {
-public:
-    enum class Traps
-    {
-        TRAP_GETC = 0x20,  // Get character from keyboard, not echoed onto the terminal.
-        TRAP_OUT = 0x21,   // Output a character.
-        TRAP_PUTS = 0x22,  // Output a word string.
-        TRAP_IN = 0x23,    // Get character from keyboard, echoed onto the terminal.
-        TRAP_PUTSP = 0x24, // Output a byte string.
-        TRAP_HALT = 0x25   // Halt the program.
-    };
-
-private:
-    // Memory - 65536 x 16-bit locations (i.e., not bytes).
-    uint16_t mem_[65536];
-
-    static uint16_t Swap16(uint16_t x) { return (x << 8) | (x >> 8); }
-
-public:
-    // CRTP methods to be invoked from the base class.
-    void WriteMem(uint16_t address, uint16_t val) { mem_[address] = val; }
-    uint16_t ReadMem(uint16_t address);
-
-public:
-    void ReadImage(FILE* file);
-    bool ReadImage(const char* image_path);
-    lc3::State Trap(const uint16_t instr);
-
-    bool HasKey() const { return key_ != 0; };
-
-    uint16_t GetKey()
-    {
-        auto key = key_;
-        key_ = 0;
-        return key;
-    }
-
-    void SetKey(uint16_t key)
-    {
-        key_ = key;
-    }
-
-private:
-    uint16_t key_{0};
+    isBlockedOnInput = 0x01,
+    isBlockedOnOutput = 0x02
 };
 
-uint16_t Lc3Vm::ReadMem(uint16_t address)
+struct VmState
 {
-    // External mapped I/O ports.
-    constexpr uint16_t MR_KBSR = 0xFE00; // Keyboard status register.
-    constexpr uint16_t MR_KBDR = 0xFE02; // Keyboard data register.
+    Lc3C lc3;        // The VM itself.
+    uint32_t blocked; // Bitfields that indicate why the VM is blocked.
+};
 
-    if (address == MR_KBSR)
-    {
-        // The VM is trying to read the keyboard.
-        if (HasKey())
-        {
-            mem_[MR_KBSR] = (1 << 15);
-            mem_[MR_KBDR] = GetKey();
-        }
-        else
-        {
-            mem_[MR_KBSR] = 0;
-        }
-    }
-    return mem_[address];
-}
-
-lc3::State Lc3Vm::Trap(const uint16_t instr)
+bool Run(VmState& vm)
 {
-    // Default back to running.
-    state_ = lc3::Running();
+    auto IsRunning = [](const lc3::State& state) { return std::holds_alternative<lc3::Running>(state); };
+    auto IsStopped = [](const lc3::State& state) { return std::holds_alternative<lc3::Stopped>(state); };
+    auto IsTrapped = [](const lc3::State& state) { return std::holds_alternative<lc3::Trapped>(state); };
 
-    switch (static_cast<Traps>(instr & 0xff))
+    auto& lc3 = vm.lc3;
+    if (lc3::State state = lc3.GetState(); !IsStopped(state))
     {
-    case Traps::TRAP_GETC:
-        // Trap GETC - read a single character.
-        reg_[0] = GetKey();
-        break;
-
-    case Traps::TRAP_OUT:
-        // Trap OUT - write a single character.
-        putc((char)reg_[0], stdout);
-        fflush(stdout);
-        break;
-
-    case Traps::TRAP_PUTS:
-        // Trap PUTS - write a character string.
+        // If the VM is trapped and it isn't blocked then execute the trap.
+        if (IsTrapped(state) && !vm.blocked)
         {
-            /* one char per word */
-            uint16_t* c = mem_ + reg_[0];
-            while (*c)
+            state = lc3.Trap(std::get<lc3::Trapped>(state).trap);
+        }
+
+        // If the VM can run then run it.
+        if (IsRunning(state))
+        {
+            constexpr size_t maxTicks = 1000;
+            state = lc3.Run(maxTicks);
+            if (IsTrapped(state))
             {
-                putc((char)*c, stdout);
-                ++c;
+                // The VM has become trapped, so find out what it needs to fulfil the trap, e.g., input, and block it until that condition is fulfilled.
+                auto& trapped = std::get<lc3::Trapped>(state);
+                switch (static_cast<Lc3C::Traps>(trapped.trap & 0xff))
+                {
+                case Lc3C::Traps::TRAP_GETC:
+                case Lc3C::Traps::TRAP_IN:
+                    vm.blocked |= isBlockedOnInput;
+                    break;
+
+                case Lc3C::Traps::TRAP_OUT:
+                case Lc3C::Traps::TRAP_PUTS:
+                case Lc3C::Traps::TRAP_PUTSP:
+                    vm.blocked |= isBlockedOnOutput;
+                    break;
+
+                default:
+                    break;
+                }
             }
-            fflush(stdout);
         }
-        break;
 
-    case Traps::TRAP_IN:
-        // Trap IN - read a single character.
-        {
-            printf("Enter a character: ");
-            char c = GetKey();
-            putc(c, stdout);
-            reg_[0] = static_cast<uint16_t>(c);
-        }
-        break;
-
-    case Traps::TRAP_PUTSP:
-        // Trap PUTSP - write a big-endian byte-packed character string.
-        {
-            uint16_t* c = mem_ + reg_[0];
-            while (*c)
-            {
-                char char1 = (*c) & 0xFF;
-                putc(char1, stdout);
-                char char2 = (*c) >> 8;
-                if (char2) putc(char2, stdout);
-                ++c;
-            }
-            fflush(stdout);
-        }
-        break;
-
-    case Traps::TRAP_HALT:
-        // Trap HALT - and catch fire.
-        puts("HALT");
-        fflush(stdout);
-        state_ = lc3::Stopped();
-        break;
+        return !IsStopped(state);
     }
-    return state_;
-}
 
-void Lc3Vm::ReadImage(FILE* file)
-{
-    // The origin tells us where in memory to place the image.
-    uint16_t origin;
-    fread(&origin, sizeof(origin), 1, file);
-    origin = Swap16(origin);
-
-    // We know the maximum file size so we only need one fread.
-    uint16_t max_read = UINT16_MAX - origin;
-    uint16_t* p = mem_ + origin;
-    size_t read = fread(p, sizeof(uint16_t), max_read, file);
-
-    // Swap to little endian.
-    while (read-- > 0)
-    {
-        *p = Swap16(*p);
-        ++p;
-    }
-}
-
-bool Lc3Vm::ReadImage(const char* image_path)
-{
-    FILE* file = fopen(image_path, "rb");
-    if (!file) { return false; }
-    ReadImage(file);
-    fclose(file);
     return true;
+}
+
+void Run(std::vector<VmState> vms)
+{
+    size_t consoleOwner = 0;
+    size_t running = vms.size();
+    while (running > 0)
+    {
+        if (_kbhit())
+        {
+            uint16_t key = _getch();
+            // If the user pressed [Esc] then cycle console ownership to the next VM.
+            if (key == '\x1b')
+            {
+                consoleOwner = (consoleOwner + 1) % vms.size();
+                fprintf(stderr, "\nConsole owner: %zd\n", consoleOwner);
+            }
+            // Otherwise pass the key to the console owner.
+            else
+            {
+                vms[consoleOwner].lc3.SetKey(key);
+
+                // The console owner VM can't be blocked on input as we just gave it a key.
+                vms[consoleOwner].blocked &= (~isBlockedOnInput);
+            }
+        }
+
+        // The console owner VM can't be blocked on output.
+        vms[consoleOwner].blocked &= (~isBlockedOnOutput);
+
+        for (auto& vm : vms)
+        {
+            if (!Run(vm))
+            {
+                // The VM just stopped.
+                running--;
+            }
+        }
+    }
 }
 
 int main(int argc, const char* argv[])
@@ -215,23 +150,11 @@ int main(int argc, const char* argv[])
         exit(2);
     }
 
-    enum
-    {
-        isBlockedOnInput = 0x01,
-        isBlockedOnOutput = 0x02
-    };
-
-    struct VmState
-    {
-        Lc3Vm lc3;        // The VM itself.
-        uint32_t blocked; // Bitfields that indicate why the VM is blocked.
-    };
-
     std::vector<VmState> vms;
 
     for (int i = 1; i < argc; ++i)
     {
-        VmState vmState{Lc3Vm(), 0};
+        VmState vmState{Lc3C(), 0};
         vmState.lc3.Reset();
 
         if (!vmState.lc3.ReadImage(argv[i]))
@@ -246,93 +169,7 @@ int main(int argc, const char* argv[])
     signal(SIGINT, HandleInterrupt);
     DisableInputBuffering();
 
-    auto IsRunning = [](const lc3::State& state) { return std::holds_alternative<lc3::Running>(state); };
-    auto IsStopped = [](const lc3::State& state) { return std::holds_alternative<lc3::Stopped>(state); };
-    auto IsTrapped = [](const lc3::State& state) { return std::holds_alternative<lc3::Trapped>(state); };
-
-    constexpr size_t maxTicks = 1000;
-
-    size_t consoleOwner = 0;
-
-    uint16_t key{0};
-    int running = vms.size();
-    while (running > 0)
-    {
-        if (key == 0 && _kbhit())
-        {
-            key = _getch();
-            if (key == '\x1b') // [Esc] cycles console ownership to the next VM.
-            {
-                consoleOwner = (consoleOwner + 1) % vms.size();
-                key = 0;
-                fprintf(stderr, "\nConsole owner: %zd\n", consoleOwner);
-            }
-        }
-
-        size_t index = 0;
-        for (auto& vm : vms)
-        {
-            auto& lc3 = vm.lc3;
-            if (lc3::State state = lc3.GetState(); !IsStopped(state))
-            {
-                // If the VM is the console owner then it gets access to input (if there's any available) and output.
-                if (consoleOwner == index)
-                {
-                    // If a key is available then give it to the VM.
-                    if (key != 0)
-                    {
-                        lc3.SetKey(key);
-                        key = 0;
-
-                        // The VM can't be blocked on input as we just gave it a key.
-                        vm.blocked &= (~isBlockedOnInput);
-                    }
-
-                    // The VM can't be blocked on output if it's the console owner.
-                    vm.blocked &= (~isBlockedOnOutput);
-                }
-
-                // If the VM is trapped and it isn't blocked then execute the trap.
-                if (IsTrapped(state) && !vm.blocked)
-                {
-                    state = lc3.Trap(std::get<lc3::Trapped>(state).trap);
-                }
-
-                // If the VM can run then run it.
-                if (IsRunning(state))
-                {
-                    state = lc3.Run(maxTicks);
-                    if (IsTrapped(state))
-                    {
-                        // The VM has become trapped, so find out what it needs to fulfil the trap, e.g., input, and block it until that condition is fulfilled.
-                        auto& trapped = std::get<lc3::Trapped>(state);
-                        switch (static_cast<Lc3Vm::Traps>(trapped.trap & 0xff))
-                        {
-                        case Lc3Vm::Traps::TRAP_GETC:
-                        case Lc3Vm::Traps::TRAP_IN:
-                            vm.blocked |= isBlockedOnInput;
-                            break;
-
-                        case Lc3Vm::Traps::TRAP_OUT:
-                        case Lc3Vm::Traps::TRAP_PUTS:
-                        case Lc3Vm::Traps::TRAP_PUTSP:
-                            vm.blocked |= isBlockedOnOutput;
-                            break;
-
-                        default:
-                            break;
-                        }
-                    }
-                }
-
-                if (IsStopped(state))
-                {
-                    running--;
-                }
-            }
-            index++;
-        }
-    }
+    Run(vms);
 
     RestoreInputBuffering();
 }

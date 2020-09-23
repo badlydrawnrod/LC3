@@ -25,7 +25,7 @@ namespace lc3
     ///
     /// Use CRTP to supply the ReadMem, WriteMem and Trap methods in the derived class.
     template<typename External>
-    class VmCore
+    class Lc3Core
     {
     protected:
         // VM state. Note that memory access is implemented externally.
