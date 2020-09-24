@@ -52,7 +52,11 @@ public:
 
     bool Run();
     void SetKey(uint16_t key) { lc3_.SetKey(key); }
+
+    bool IsBlocked() const { return blocked_ != 0; }
+    void SetBlocked(uint32_t flags) { blocked_ |= flags; }
     void ClearBlocked(uint32_t flags) { blocked_ &= ~flags; }
+
     bool ReadImage(const char* filename) { return lc3_.ReadImage(filename); }
 
 private:
@@ -69,7 +73,7 @@ bool VmState::Run()
     if (lc3::State state = lc3_.GetState(); !IsStopped(state))
     {
         // If the VM is trapped and it isn't blocked then execute the trap.
-        if (IsTrapped(state) && !blocked_)
+        if (IsTrapped(state) && !IsBlocked())
         {
             state = lc3_.Trap(std::get<lc3::Trapped>(state).trap);
         }
@@ -88,13 +92,13 @@ bool VmState::Run()
                 {
                 case Lc3C::Traps::TRAP_GETC:
                 case Lc3C::Traps::TRAP_IN:
-                    blocked_ |= isBlockedOnInput;
+                    SetBlocked(isBlockedOnInput);
                     break;
 
                 case Lc3C::Traps::TRAP_OUT:
                 case Lc3C::Traps::TRAP_PUTS:
                 case Lc3C::Traps::TRAP_PUTSP:
-                    blocked_ |= isBlockedOnOutput;
+                    SetBlocked(isBlockedOnOutput);
                     break;
 
                 default:
