@@ -38,6 +38,11 @@ namespace lc3
         uint16_t cond_{0};      // Condition flags.
 
     public:
+        Lc3Core() : reg_{0}
+        {
+            Reset();
+        }
+
         /// \brief Performs a warm reset of the VM by resetting PC to the start of user memory and zeroing registers and flags.
         void Reset()
         {

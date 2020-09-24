@@ -11,7 +11,6 @@
 namespace
 {
     HANDLE hStdin = INVALID_HANDLE_VALUE;
-
     DWORD oldMode;
 
     void DisableInputBuffering()
@@ -42,53 +41,60 @@ namespace
     }
 } // namespace
 
-enum : uint32_t
+class VmState
 {
-    isBlockedOnInput = 0x01,
-    isBlockedOnOutput = 0x02
+public:
+    enum : uint32_t
+    {
+        isBlockedOnInput = 0x01,
+        isBlockedOnOutput = 0x02
+    };
+
+    bool Run();
+    void SetKey(uint16_t key) { lc3_.SetKey(key); }
+    void ClearBlocked(uint32_t flags) { blocked_ &= ~flags; }
+    bool ReadImage(const char* filename) { return lc3_.ReadImage(filename); }
+
+private:
+    static bool IsRunning(const lc3::State& state) { return std::holds_alternative<lc3::Running>(state); };
+    static bool IsStopped(const lc3::State& state) { return std::holds_alternative<lc3::Stopped>(state); };
+    static bool IsTrapped(const lc3::State& state) { return std::holds_alternative<lc3::Trapped>(state); };
+
+    Lc3C lc3_;            // The VM itself.
+    uint32_t blocked_{0}; // Bitfields that indicate why the VM is blocked.
 };
 
-struct VmState
+bool VmState::Run()
 {
-    Lc3C lc3;        // The VM itself.
-    uint32_t blocked; // Bitfields that indicate why the VM is blocked.
-};
-
-bool Run(VmState& vm)
-{
-    auto IsRunning = [](const lc3::State& state) { return std::holds_alternative<lc3::Running>(state); };
-    auto IsStopped = [](const lc3::State& state) { return std::holds_alternative<lc3::Stopped>(state); };
-    auto IsTrapped = [](const lc3::State& state) { return std::holds_alternative<lc3::Trapped>(state); };
-
-    auto& lc3 = vm.lc3;
-    if (lc3::State state = lc3.GetState(); !IsStopped(state))
+    if (lc3::State state = lc3_.GetState(); !IsStopped(state))
     {
         // If the VM is trapped and it isn't blocked then execute the trap.
-        if (IsTrapped(state) && !vm.blocked)
+        if (IsTrapped(state) && !blocked_)
         {
-            state = lc3.Trap(std::get<lc3::Trapped>(state).trap);
+            state = lc3_.Trap(std::get<lc3::Trapped>(state).trap);
         }
 
         // If the VM can run then run it.
         if (IsRunning(state))
         {
             constexpr size_t maxTicks = 1000;
-            state = lc3.Run(maxTicks);
+            state = lc3_.Run(maxTicks);
             if (IsTrapped(state))
             {
-                // The VM has become trapped, so find out what it needs to fulfil the trap, e.g., input, and block it until that condition is fulfilled.
+                // The VM has become trapped, so find out what it needs to fulfil the trap, e.g., input, and block it
+                // until that condition is fulfilled.
                 auto& trapped = std::get<lc3::Trapped>(state);
                 switch (static_cast<Lc3C::Traps>(trapped.trap & 0xff))
                 {
                 case Lc3C::Traps::TRAP_GETC:
                 case Lc3C::Traps::TRAP_IN:
-                    vm.blocked |= isBlockedOnInput;
+                    blocked_ |= isBlockedOnInput;
                     break;
 
                 case Lc3C::Traps::TRAP_OUT:
                 case Lc3C::Traps::TRAP_PUTS:
                 case Lc3C::Traps::TRAP_PUTSP:
-                    vm.blocked |= isBlockedOnOutput;
+                    blocked_ |= isBlockedOnOutput;
                     break;
 
                 default:
@@ -103,7 +109,7 @@ bool Run(VmState& vm)
     return true;
 }
 
-void Run(std::vector<VmState> vms)
+void Run(std::vector<VmState>&& vms)
 {
     size_t consoleOwner = 0;
     size_t running = vms.size();
@@ -118,22 +124,20 @@ void Run(std::vector<VmState> vms)
                 consoleOwner = (consoleOwner + 1) % vms.size();
                 fprintf(stderr, "\nConsole owner: %zd\n", consoleOwner);
             }
-            // Otherwise pass the key to the console owner.
+            // Otherwise pass the key to the console owner and unblock it.
             else
             {
-                vms[consoleOwner].lc3.SetKey(key);
-
-                // The console owner VM can't be blocked on input as we just gave it a key.
-                vms[consoleOwner].blocked &= (~isBlockedOnInput);
+                vms[consoleOwner].SetKey(key);
+                vms[consoleOwner].ClearBlocked(VmState::isBlockedOnInput);
             }
         }
 
         // The console owner VM can't be blocked on output.
-        vms[consoleOwner].blocked &= (~isBlockedOnOutput);
+        vms[consoleOwner].ClearBlocked(VmState::isBlockedOnOutput);
 
         for (auto& vm : vms)
         {
-            if (!Run(vm))
+            if (!vm.Run())
             {
                 // The VM just stopped.
                 running--;
@@ -154,10 +158,9 @@ int main(int argc, const char* argv[])
 
     for (int i = 1; i < argc; ++i)
     {
-        VmState vmState{Lc3C(), 0};
-        vmState.lc3.Reset();
+        VmState vmState;
 
-        if (!vmState.lc3.ReadImage(argv[i]))
+        if (!vmState.ReadImage(argv[i]))
         {
             printf("failed to load image: %s\n", argv[i]);
             exit(1);
@@ -169,7 +172,7 @@ int main(int argc, const char* argv[])
     signal(SIGINT, HandleInterrupt);
     DisableInputBuffering();
 
-    Run(vms);
+    Run(std::move(vms));
 
     RestoreInputBuffering();
 }
