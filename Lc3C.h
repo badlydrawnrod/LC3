@@ -19,15 +19,20 @@ public:
         TRAP_HALT = 0x25   // Halt the program.
     };
 
-    /// \brief Invoked by the CRTP base class to write to VM memory.
+    using Loader = std::function<void(uint16_t*, uint16_t)>;
+    using Saver = std::function<void(uint16_t*, uint16_t)>;
+
+    /// \brief Invoked by the CRTP base class to write a word to VM memory.
     void WriteMem(uint16_t address, uint16_t val) { mem_[address] = val; }
 
-    /// \brief Invoked by the CRTP base class to read from VM memory.
+    /// \brief Invoked by the CRTP base class to read a word from VM memory.
     uint16_t ReadMem(uint16_t address);
 
-    using Reader = std::function<void(uint16_t*, uint16_t)>;
+    /// \brief Copies data to VM memory starting at the given VM address.
+    void Load(uint16_t dst, uint16_t count, Loader load) { load(mem_ + dst, count); }
 
-    void Load(uint16_t origin, uint16_t count, Reader read);
+    /// \brief Copies data from VM memory starting at the given VM address.
+    void Save(uint16_t src, uint16_t count, Saver save) { save(mem_ + src, count); }
 
     /// \brief Notifies the VM that a trap can be fulfilled.
     /// \param instr the trap instruction to fulfil.

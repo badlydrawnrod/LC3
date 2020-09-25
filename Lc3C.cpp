@@ -1,7 +1,6 @@
 #include "Lc3C.h"
 
 #include <cstdint>
-#include <functional>
 
 uint16_t Lc3C::ReadMem(uint16_t address)
 {
@@ -92,9 +91,4 @@ lc3::State Lc3C::Trap(const uint16_t instr)
         break;
     }
     return state_;
-}
-
-void Lc3C::Load(uint16_t origin, uint16_t count, Reader read)
-{
-    read(mem_ + origin, count);
 }
