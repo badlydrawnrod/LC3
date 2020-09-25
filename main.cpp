@@ -39,6 +39,9 @@ namespace
         printf("\n");
         exit(-2);
     }
+
+    inline uint16_t Swap16(uint16_t x) { return (x << 8) | (x >> 8); }
+
 } // namespace
 
 class VmState
@@ -57,7 +60,8 @@ public:
     void SetBlocked(uint32_t flags) { blocked_ |= flags; }
     void ClearBlocked(uint32_t flags) { blocked_ &= ~flags; }
 
-    bool ReadImage(const char* filename) { return lc3_.ReadImage(filename); }
+    void ReadImage(FILE* file);
+    bool ReadImage(const char* filename);
 
 private:
     static bool IsRunning(const lc3::State& state) { return std::holds_alternative<lc3::Running>(state); };
@@ -67,6 +71,36 @@ private:
     Lc3C lc3_;            // The VM itself.
     uint32_t blocked_{0}; // Bitfields that indicate why the VM is blocked.
 };
+
+void VmState::ReadImage(FILE* file)
+{
+    // The origin tells us where in memory to place the image.
+    uint16_t origin;
+    fread(&origin, sizeof(origin), 1, file);
+    origin = Swap16(origin);
+
+    // We know the maximum file size so we only need one fread.
+    uint16_t max_read = UINT16_MAX - origin;
+
+    lc3_.Load(origin, max_read, [&file](uint16_t* p, uint16_t count) {
+        size_t read = fread(p, sizeof(uint16_t), count, file);
+        // Swap to little endian.
+        while (read-- > 0)
+        {
+            *p = Swap16(*p);
+            ++p;
+        }
+    });
+}
+
+bool VmState::ReadImage(const char* filename)
+{
+    FILE* file = fopen(filename, "rb");
+    if (!file) { return false; }
+    ReadImage(file);
+    fclose(file);
+    return true;
+}
 
 bool VmState::Run()
 {

@@ -1,6 +1,7 @@
 #include "Lc3C.h"
 
 #include <cstdint>
+#include <functional>
 
 uint16_t Lc3C::ReadMem(uint16_t address)
 {
@@ -93,31 +94,7 @@ lc3::State Lc3C::Trap(const uint16_t instr)
     return state_;
 }
 
-void Lc3C::ReadImage(FILE* file)
+void Lc3C::Load(uint16_t origin, uint16_t count, Reader read)
 {
-    // The origin tells us where in memory to place the image.
-    uint16_t origin;
-    fread(&origin, sizeof(origin), 1, file);
-    origin = Swap16(origin);
-
-    // We know the maximum file size so we only need one fread.
-    uint16_t max_read = UINT16_MAX - origin;
-    uint16_t* p = mem_ + origin;
-    size_t read = fread(p, sizeof(uint16_t), max_read, file);
-
-    // Swap to little endian.
-    while (read-- > 0)
-    {
-        *p = Swap16(*p);
-        ++p;
-    }
-}
-
-bool Lc3C::ReadImage(const char* filename)
-{
-    FILE* file = fopen(filename, "rb");
-    if (!file) { return false; }
-    ReadImage(file);
-    fclose(file);
-    return true;
+    read(mem_ + origin, count);
 }

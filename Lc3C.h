@@ -3,6 +3,7 @@
 #include "LC3.h"
 
 #include <cstdint>
+#include <functional>
 
 /// \brief An LC3 VM with a console.
 class Lc3C : public lc3::Lc3Core<Lc3C>
@@ -24,14 +25,9 @@ public:
     /// \brief Invoked by the CRTP base class to read from VM memory.
     uint16_t ReadMem(uint16_t address);
 
-    /// \brief Loads the given program image into VM memory.
-    /// \param file the file to load.
-    void ReadImage(FILE* file);
+    using Reader = std::function<void(uint16_t*, uint16_t)>;
 
-    /// \brief Loads the given program image file into the VM.
-    /// \brief Loads the given program image into VM memory.
-    /// \param filename the name of the file to load.
-    bool ReadImage(const char* filename);
+    void Load(uint16_t origin, uint16_t count, Reader read);
 
     /// \brief Notifies the VM that a trap can be fulfilled.
     /// \param instr the trap instruction to fulfil.
@@ -42,8 +38,6 @@ public:
     void SetKey(uint16_t key) { key_ = key; }
 
 private:
-    static uint16_t Swap16(uint16_t x) { return (x << 8) | (x >> 8); }
-
     /// \brief Called by the VM to detect if the execution environment has made a key available.
     /// Does not consume the key.
     bool HasKey() const { return key_ != 0; };
